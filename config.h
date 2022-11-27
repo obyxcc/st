@@ -5,7 +5,7 @@
  *
  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
  */
-static char *font = "JetBrains Mono:style=Regular:pixelsize=14:antialias=true:autohint=true";
+static char *font = "JetBrains Mono:style=Regular:pixelsize=16:antialias=true:autohint=true";
 static int borderpx = 20;
 
 /*
@@ -87,7 +87,7 @@ const int boxdraw = 1;
 const int boxdraw_bold = 0;
 
 /* braille (U28XX):  1: render as adjacent "pixels",  0: use font */
-const int boxdraw_braille = 1;
+const int boxdraw_braille = 0;
 
 /*
  * bell volume. It must be a value between -100 and 100. Use 0 for disabling
