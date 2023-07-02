@@ -34,6 +34,7 @@ typedef struct {
 	void (*func)(const Arg *);
 	const Arg arg;
 	uint  release;
+	int  altscrn;  /* 0: don't care, -1: not alt screen, 1: alt screen */
 } MouseShortcut;
 
 typedef struct {
@@ -73,6 +74,9 @@ void kscrolldown(const Arg *);
 /* config.h for applying patches and the configuration. */
 #include "config.h"
 
+/* size of title stack */
+#define TITLESTACKSIZE 8
+
 /* XEMBED messages */
 #define XEMBED_FOCUS_IN  4
 #define XEMBED_FOCUS_OUT 5
@@ -105,6 +109,7 @@ typedef struct {
 	Drawable buf;
 	GlyphFontSpec *specbuf; /* font spec buffer used for rendering */
 	Atom xembed, wmdeletewin, netwmname, netwmiconname, netwmpid;
+	Atom netwmstate, netwmfullscreen;
 	struct {
 		XIM xim;
 		XIC xic;
@@ -231,6 +236,8 @@ static DC dc;
 static XWindow xw;
 static XSelection xsel;
 static TermWindow win;
+static int tstki; /* title stack index */
+static char *titlestack[TITLESTACKSIZE]; /* title stack */
 
 /* Font Ring Cache */
 enum {
@@ -466,6 +473,7 @@ mouseaction(XEvent *e, uint release)
 	for (ms = mshortcuts; ms < mshortcuts + LEN(mshortcuts); ms++) {
 		if (ms->release == release &&
 		    ms->button == e->xbutton.button &&
+		    (!ms->altscrn || (ms->altscrn == (tisaltscr() ? 1 : -1))) &&
 		    (match(ms->mod, state) ||  /* exact or forced */
 		     match(ms->mod, state & ~forcemousemod))) {
 			ms->func(&(ms->arg));
@@ -772,6 +780,24 @@ xresize(int col, int row)
 
 	/* resize to new width */
 	xw.specbuf = xrealloc(xw.specbuf, col * sizeof(GlyphFontSpec));
+}
+
+void
+fullscreen(const Arg *arg)
+{
+	XEvent ev;
+
+	memset(&ev, 0, sizeof(ev));
+
+	ev.xclient.type = ClientMessage;
+	ev.xclient.message_type = xw.netwmstate;
+	ev.xclient.display = xw.dpy;
+	ev.xclient.window = xw.win;
+	ev.xclient.format = 32;
+	ev.xclient.data.l[0] = 2; /* _NET_WM_STATE_TOGGLE */
+	ev.xclient.data.l[1] = xw.netwmfullscreen;
+
+	XSendEvent(xw.dpy, DefaultRootWindow(xw.dpy), False, SubstructureNotifyMask|SubstructureRedirectMask, &ev);
 }
 
 ushort
@@ -1237,6 +1263,9 @@ xinit(int cols, int rows)
 	xw.netwmpid = XInternAtom(xw.dpy, "_NET_WM_PID", False);
 	XChangeProperty(xw.dpy, xw.win, xw.netwmpid, XA_CARDINAL, 32,
 			PropModeReplace, (uchar *)&thispid, 1);
+
+	xw.netwmstate = XInternAtom(xw.dpy, "_NET_WM_STATE", False);
+	xw.netwmfullscreen = XInternAtom(xw.dpy, "_NET_WM_STATE_FULLSCREEN", False);
 
 	win.mode = MODE_NUMLOCK;
 	resettitle();
@@ -2033,10 +2062,30 @@ xseticontitle(char *p)
 }
 
 void
-xsettitle(char *p)
+xfreetitlestack(void)
 {
-	XTextProperty prop;
-	DEFAULT(p, opt_title);
+	for (int i = 0; i < LEN(titlestack); i++) {
+		free(titlestack[i]);
+		titlestack[i] = NULL;
+	}
+}
+
+void
+xsettitle(char *p, int pop)
+{
+ 	XTextProperty prop;
+
+	free(titlestack[tstki]);
+	if (pop) {
+		titlestack[tstki] = NULL;
+		tstki = (tstki - 1 + TITLESTACKSIZE) % TITLESTACKSIZE;
+		p = titlestack[tstki] ? titlestack[tstki] : opt_title;
+	} else if (p) {
+		titlestack[tstki] = xstrdup(p);
+	} else {
+		titlestack[tstki] = NULL;
+		p = opt_title;
+	}
 
 	if (Xutf8TextListToTextProperty(xw.dpy, &p, 1, XUTF8StringStyle,
 	                                &prop) != Success)
@@ -2064,6 +2113,16 @@ vbellbegin() {
 	vbellset = 1;
 	redraw();
 	XFlush(xw.dpy);
+}
+
+void
+xpushtitle(void)
+{
+	int tstkin = (tstki + 1) % TITLESTACKSIZE;
+
+	free(titlestack[tstkin]);
+	titlestack[tstkin] = titlestack[tstki] ? xstrdup(titlestack[tstki]) : NULL;
+	tstki = tstkin;
 }
 
 int
